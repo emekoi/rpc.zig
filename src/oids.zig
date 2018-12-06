@@ -15,15 +15,6 @@ pub const OidError = error {
     InvalidOid,
 };
 
-fn hexByte(hex: u8) u8 {
-    return switch (hex) {
-        '0' ... '9' => hex - '0',
-        'a' ... 'f' => hex - 'a' + 10,
-        'A' ... 'F' => hex - 'A' + 10,
-        else => 0,
-    };
-}
-
 pub const Oid = packed struct {
     const Size = @sizeOf(u32) * 3;
 
@@ -51,30 +42,21 @@ pub const Oid = packed struct {
         };
     }
 
-    pub fn parse(str: []const u8) Oid {
+    pub fn parse(str: []const u8) !Oid {
         var result: Oid = undefined;
-
-        const bytes = @ptrCast([*]u8, &result);
-            
-        comptime var i = 0;
-        inline while (i < Size) : (i += 1) {
-            const hi = hexByte(str[2 * i]);
-            const lo = hexByte(str[2 * i + 1]);
-            bytes[i] = (hi << 4) | lo;
-        }
+        var bytes = std.mem.asBytes(&result);
+        try std.fmt.hexToBytes(bytes[0..], str);
         return result;
     }
 
+    // TODO make this simpler
     pub fn toString(self: Oid) [Size * 2]u8 {
         const hex = "0123456789abcdef";
         var result = []u8{0} ** (Size * 2);
-
-        const bytes = @ptrCast([*]const u8, &self);
-
-        comptime var i = 0;
-        inline while (i < Size) : (i += 1) {
-            result[2 * i] = hex[(bytes[i] & 0xF0) >> 4];
-            result[2 * i + 1] = hex[bytes[i] & 0x0F];
+        const bytes = std.mem.toBytes(self);
+        for (bytes) |b, i| {
+            result[2 * i] = hex[(b & 0xF0) >> 4];
+            result[2 * i + 1] = hex[b & 0x0F];
         }
         return result;
     }
@@ -88,5 +70,5 @@ pub const Oid = packed struct {
 test "Oids" {
     const assert = std.debug.assert;
     const oid = Oid.new();
-    assert(oid.equal(Oid.parse(oid.toString())));
+    assert(oid.equal(try Oid.parse(oid.toString())));
 }
