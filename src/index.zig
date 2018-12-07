@@ -26,13 +26,11 @@ pub const Request = struct {
 };
 
 pub const Notification = struct {
-    jsonrpc: []const u8,
     method: []const u8,
     params: ?Value,
 
     pub fn new(method: []const u8, params: ?Value) Notification {
         return Notification {
-            .jsonrpc = "2.0",
             .method = method,
             .params = params,
         };
@@ -40,14 +38,12 @@ pub const Notification = struct {
 };
 
 pub const Response = struct {
-    jsonrpc: []const u8,
     result: ?Value,
     err: ?Error,
     id: ?Oid,
 
     pub fn new(result: Value, id: Oid) Response {
         return Response {
-            .jsonrpc = "2.0",
             .result = result,
             .err = null,
             .id = id,
@@ -56,7 +52,6 @@ pub const Response = struct {
 
     pub fn err(err: Error) Response {
         return Response {
-            .jsonrpc = "2.0",
             .result = null,
             .err = err,
             .id = null,
@@ -75,6 +70,10 @@ pub const Error = struct {
             .message = code.getMsg(),
             .data = data,
         };
+    }
+
+    pub fn parse(data: []const u8) Error {
+
     }
 };
 
@@ -104,7 +103,7 @@ pub const ErrorCode = union(enum) {
         };
     }
 
-    pub const getMsg(self: ErrorCode) []const u8 {
+    pub fn getMsg(self: ErrorCode) []const u8 {
         return switch (self) {
             ErrorCode.ParserError => "Parse error",
             ErrorCode.InvalidRequest => "Invalid Request",
