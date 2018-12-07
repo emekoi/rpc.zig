@@ -6,74 +6,146 @@
 
 const std = @import("std");
 
-pub const Oid = @import("oid.zig").Oid;
+pub const Oid = @import("oids.zig").Oid;
 pub const Value = std.json.Value;
 
-pub const Request = struct {
-    jsonrpc: []const u8,
-    method: []const u8,
-    params: ?Value,
-    id: Oid,
+const rpc_version = "\"jsonrpc\":\"2.0\"";
 
-    pub fn new(method: []const u8, params: ?Value) Request {
+pub const Request = union(enum) {
+    Call: CallObj,
+    Notification: NotificationObj,
+
+    pub const CallObj = struct {
+        method: []const u8,
+        params: ?Value,
+        id: Oid,
+    };
+
+    pub const NotificationObj = struct {
+        method: []const u8,
+        params: ?Value,
+    };
+
+    pub fn call(method: []const u8, params: ?Value) Request {
         return Request {
-            .jsonrpc = "2.0",
-            .method = method,
-            .params = params,
-            .id = Oid.new(),
+            .Call = CallObj {
+                .method = method, 
+                .params = params,
+                .id = Oid.new(),
+            }
         };
+    }
+
+    pub fn notify(method: []const u8, params: ?Value) Request {
+        return Request {
+            .Notification = NotificationObj {
+                .method = method, 
+                .params = params,
+            }
+        };
+    }
+
+    pub fn format(
+        self: Request,
+        comptime fmt: []const u8,
+        context: var,
+        comptime FmtError: type,
+        output: fn (@typeOf(context), []const u8) FmtError!void,
+    ) FmtError!void {
+        switch (self) {
+            Request.Call => |c| {
+                if (c.params) |p| {
+                    return std.fmt.format(context, FmtError, output,
+                        "{}{},\"method\":\"{}\",\"params\":{},\"id\":\"{}\"{}",
+                        "{", rpc_version, c.method, p.dump(), c.id, "}"
+                    );
+                } else {
+                    return std.fmt.format(context, FmtError, output,
+                        "{}{},\"method\":\"{}\",\"id\":\"{}\"{}",
+                        "{", rpc_version, c.method, c.id, "}"
+                    );
+                }
+            },
+            Request.Notification => |n| {
+                if (n.params) |p| {
+                    return std.fmt.format(context, FmtError, output,
+                        "{}{},\"method\":\"{}\",\"params\":{}{}",
+                        "{", rpc_version, n.method, p.dump(), "}"
+                    );
+                } else {
+                    return std.fmt.format(context, FmtError, output,
+                        "{}{},\"method\":\"{}\"{}",
+                        "{", rpc_version, n.method, "}"
+                    );
+                }
+            }
+        }
     }
 };
 
-pub const Notification = struct {
-    method: []const u8,
-    params: ?Value,
 
-    pub fn new(method: []const u8, params: ?Value) Notification {
-        return Notification {
-            .method = method,
-            .params = params,
-        };
-    }
-};
+pub const Response = union(enum) {
+    Error: ErrorObj,
+    Ok: OkObj,
 
-pub const Response = struct {
-    result: ?Value,
-    err: ?Error,
-    id: ?Oid,
+    pub const ErrorObj = struct {
+        code: ErrorCode,
+        message: []const u8,
+        data: ?Value,
+    };
 
-    pub fn new(result: Value, id: Oid) Response {
+    pub const OkObj = struct {
+        result: Value,
+        id: Oid,
+    };
+
+    pub fn ok(result: Value, id: Oid) Response {
         return Response {
-            .result = result,
-            .err = null,
-            .id = id,
+            .Ok = OkObj {
+                .result = result,
+                .id = id,
+            }
         };
     }
 
-    pub fn err(err: Error) Response {
+    pub fn err(code: ErrorCode, data: ?Value) Response {
         return Response {
-            .result = null,
-            .err = err,
-            .id = null,
-        };
-    }
-};
-
-pub const Error = struct {
-    code: ErrorCode,
-    message: []const u8,
-    data: ?Value,
-
-    pub fn new(code: ErrorCode, data: ?Value) Error {
-        return Error {
-            .code = code,
-            .message = code.getMsg(),
-            .data = data,
+            .Error = ErrorObj {
+                .code = code,
+                .message = code.getMsg(),
+                .data = data,
+            }
         };
     }
 
-    pub fn parse(data: []const u8) Error {
-
+    pub fn format(
+        self: Response,
+        comptime fmt: []const u8,
+        context: var,
+        comptime FmtError: type,
+        output: fn (@typeOf(context), []const u8) FmtError!void,
+    ) FmtError!void {
+        switch (self) {
+            Response.Ok => |o| {
+                return std.fmt.format(context, FmtError, output,
+                    "{}{},\"result\":{},\"id\":\"{}\"{}",
+                    "{", rpc_version, o.result.dump(), o.id, "}"
+                );
+            },
+            Response.Error => |e| {
+                if (e.data) |d| {
+                    return std.fmt.format(context, FmtError, output,
+                        "{}{},\"error\":{}\"code\":{},\"message\":\"{}\",\"data\":{}{},\"id\":null{}",
+                        "{", rpc_version, "{", e.code.toInt(), e.message, d.dump(), "}", "}"
+                    );
+                } else {
+                    return std.fmt.format(context, FmtError, output,
+                        "{}{},\"error\":{}\"code\":{},\"message\":\"{}\"{},\"id\":null{}",
+                        "{", rpc_version, "{", e.code.toInt(), e.message, "}", "}"
+                    );
+                }
+            }
+        }
     }
 };
 
@@ -84,14 +156,14 @@ pub const ErrorCode = union(enum) {
     InvalidParams: void,
     InternalError: void,
     ServerError: isize,
-    Custom: Custom,
+    Custom: CustomErr,
 
-    pub const Custom = struct {
+    pub const CustomErr = struct {
         err: anyerror,
-        msg: []const u8,
+        message: []const u8,
     };
 
-    fn toCode(self: ErrorCode) isize {
+    fn toInt(self: ErrorCode) isize {
         return switch (self) {
             ErrorCode.ParserError => -32700,
             ErrorCode.InvalidRequest => -32600,
@@ -99,7 +171,7 @@ pub const ErrorCode = union(enum) {
             ErrorCode.InvalidParams => -32602,
             ErrorCode.InternalError => -32603,
             ErrorCode.ServerError => |c| c,
-            ErrorCode.Custom => |c| @errorToInt(c.err),
+            ErrorCode.Custom => |c| @intCast(isize, @errorToInt(c.err)),
         };
     }
 
@@ -111,11 +183,10 @@ pub const ErrorCode = union(enum) {
             ErrorCode.InvalidParams => "Invalid params",
             ErrorCode.InternalError => "Internal error",
             ErrorCode.ServerError => "Server error",
-            ErrorCode.Custom => |c| c.msg,
+            ErrorCode.Custom => |c| c.message,
         };
     }
 };
-
 
 test "import test" {
     _ = @import("oids.zig");

@@ -61,6 +61,16 @@ pub const Oid = packed struct {
         return result;
     }
 
+    pub fn format(
+        self: Oid,
+        comptime fmt: []const u8,
+        context: var,
+        comptime FmtError: type,
+        output: fn (@typeOf(context), []const u8) FmtError!void,
+    ) FmtError!void {
+        return std.fmt.format(context, FmtError, output, "{}", self.toString());
+    }
+
     pub fn equal(self: Oid, other: Oid) bool {
         return self.time == other.time and self.fuzz == other.fuzz and self.count == other.count;
     }

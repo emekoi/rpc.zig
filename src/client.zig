@@ -105,8 +105,9 @@ pub const Client = struct {
     }
 
     pub fn async call(self: *Client, method: []const u8, params: ?rpc.Value) !rpc.Response {
-        const request = rpc.Request.new(methods, params);
+        const request = rpc.Request.call(methods, params);
         self.fd.send(request.toString() ++ "\r\n");
+
         // const fut = try self.getResponse();
         _ = self.await_ids.set(request.id, ResponseFuture {
             .handle = @handle(),
@@ -116,7 +117,7 @@ pub const Client = struct {
     }
 
     pub async fn notify(self: *Client, method: []const u8, params: ?rpc.Value) !void {
-        const request = rpc.Request.new(methods, params);
+        const request = rpc.Request.notify(methods, params);
         try await self.fd.send(request.toString() ++ "\r\n");
     }
 };
