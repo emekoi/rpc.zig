@@ -5,11 +5,65 @@
 //
 
 const std = @import("std");
+const assert = std.debug.assert;
 
 pub const Oid = @import("oids.zig").Oid;
 pub const Value = std.json.Value;
 
 const rpc_version = "\"jsonrpc\":\"2.0\"";
+
+pub fn jsonToString(
+    self: Value,
+    comptime fmt: []const u8,
+    context: var,
+    comptime FmtError: type,
+    output: fn (@typeOf(context), []const u8) FmtError!void,
+) FmtError!void {
+    switch (self) {
+        Value.Null => {
+            return std.fmt.format(context, FmtError, output, "null");
+        },
+        Value.Bool => |inner| {
+            return std.fmt.format(context, FmtError, output, "{}", inner);
+        },
+        Value.Integer => |inner| {
+            return std.fmt.format(context, FmtError, output, "{}", inner);
+        },
+        Value.Float => |inner| {
+            return std.fmt.format(context, FmtError, output, "{.5}", inner);
+        },
+        Value.String => |inner| {
+            return std.fmt.format(context, FmtError, output, "\"{}\"", inner);
+        },
+        Value.Array => |inner| {
+            var not_first = false;
+            try std.fmt.format(context, FmtError, output, "[");
+            for (inner.toSliceConst()) |value| {
+                if (not_first) {
+                    try std.fmt.format(context, FmtError, output, ",");
+                }
+                not_first = true;
+                try jsonToString(value, fmt, context, FmtError, output);
+            }
+            return std.fmt.format(context, FmtError, output, "]");
+        },
+        Value.Object => |inner| {
+            var not_first = false;
+            try std.fmt.format(context, FmtError, output, "{{");
+            var it = inner.iterator();
+
+            while (it.next()) |entry| {
+                if (not_first) {
+                    try std.fmt.format(context, FmtError, output, ",");
+                }
+                not_first = true;
+                try std.fmt.format(context, FmtError, output, "\"{}\":", entry.key);
+                try jsonToString(entry.value, fmt, context, FmtError, output);
+            }
+            return std.fmt.format(context, FmtError, output, "}}");
+        },
+    }
+}
 
 pub const Request = union(enum) {
     Call: CallObj,
@@ -55,10 +109,9 @@ pub const Request = union(enum) {
         switch (self) {
             Request.Call => |c| {
                 if (c.params) |p| {
-                    return std.fmt.format(context, FmtError, output,
-                        "{}{},\"method\":\"{}\",\"params\":{},\"id\":\"{}\"{}",
-                        "{", rpc_version, c.method, p.dump(), c.id, "}"
-                    );
+                    try std.fmt.format(context, FmtError, output, "{}{},\"method\":\"{}\",\"params\":", "{", rpc_version, c.method);
+                    try jsonToString(p, fmt, context, FmtError, output);
+                    try std.fmt.format(context, FmtError, output, ",\"id\":\"{}\"{}", c.id, "}");
                 } else {
                     return std.fmt.format(context, FmtError, output,
                         "{}{},\"method\":\"{}\",\"id\":\"{}\"{}",
@@ -68,10 +121,9 @@ pub const Request = union(enum) {
             },
             Request.Notification => |n| {
                 if (n.params) |p| {
-                    return std.fmt.format(context, FmtError, output,
-                        "{}{},\"method\":\"{}\",\"params\":{}{}",
-                        "{", rpc_version, n.method, p.dump(), "}"
-                    );
+                    try std.fmt.format(context, FmtError, output, "{}{},\"method\":\"{}\",\"params\":", "{", rpc_version, n.method);
+                    try jsonToString(p, fmt, context, FmtError, output);
+                    try std.fmt.format(context, FmtError, output, "{}", "}");
                 } else {
                     return std.fmt.format(context, FmtError, output,
                         "{}{},\"method\":\"{}\"{}",
@@ -82,7 +134,6 @@ pub const Request = union(enum) {
         }
     }
 };
-
 
 pub const Response = union(enum) {
     Error: ErrorObj,
@@ -127,19 +178,20 @@ pub const Response = union(enum) {
     ) FmtError!void {
         switch (self) {
             Response.Ok => |o| {
-                return std.fmt.format(context, FmtError, output,
-                    "{}{},\"result\":{},\"id\":\"{}\"{}",
-                    "{", rpc_version, o.result.dump(), o.id, "}"
-                );
+                try std.fmt.format(context, FmtError, output, "{}{},\"result\":", "{", rpc_version);
+                try jsonToString(o.result, fmt, context, FmtError, output);
+                try std.fmt.format(context, FmtError, output, ",\"id\":\"{}\"{}", o.id, "}");
             },
             Response.Error => |e| {
                 if (e.data) |d| {
-                    return std.fmt.format(context, FmtError, output,
-                        "{}{},\"error\":{}\"code\":{},\"message\":\"{}\",\"data\":{}{},\"id\":null{}",
-                        "{", rpc_version, "{", e.code.toInt(), e.message, d.dump(), "}", "}"
+                    try std.fmt.format(context, FmtError, output,
+                        "{}{},\"error\":{}\"code\":{},\"message\":\"{}\",\"data\":",
+                        "{", rpc_version, "{", e.code.toInt(), e.message
                     );
+                    try jsonToString(d, fmt, context, FmtError, output);
+                    try std.fmt.format(context, FmtError, output, ",\"id\":null{}", "}");
                 } else {
-                    return std.fmt.format(context, FmtError, output,
+                    try std.fmt.format(context, FmtError, output,
                         "{}{},\"error\":{}\"code\":{},\"message\":\"{}\"{},\"id\":null{}",
                         "{", rpc_version, "{", e.code.toInt(), e.message, "}", "}"
                     );
@@ -188,6 +240,38 @@ pub const ErrorCode = union(enum) {
     }
 };
 
-test "import test" {
-    _ = @import("oids.zig");
+test "Request.Call" {
+    var out_slice: [5000]u8 = undefined;
+    var slice_stream = std.io.SliceOutStream.init(out_slice[0..]);
+    var params = blk: {
+        var slice = []Value{ Value { .Integer = 1 }, Value { .Integer = 2 } };
+        break :blk std.ArrayList(Value).fromOwnedSlice(std.debug.global_allocator, slice[0..]);
+    };
+    try slice_stream.stream.print("{}", Request.call("example.call", Value { .Array = params }));
+    assert(std.json.validate(slice_stream.getWritten()));
+}
+
+test "Request.Notification" {
+    var out_slice = []u8{0} ** 500;
+    var slice_stream = std.io.SliceOutStream.init(out_slice[0..]);
+    var params = blk: {
+        var slice = []Value{ Value { .Integer = 1 }, Value { .Integer = 2 } };
+        break :blk std.ArrayList(Value).fromOwnedSlice(std.debug.global_allocator, slice[0..]);
+    };
+    try slice_stream.stream.print("{}", Request.notify("example.notification", Value { .Array = params }));
+    assert(std.json.validate(slice_stream.getWritten()));
+}
+
+test "Response.Ok" {
+    var out_slice = []u8{0} ** 500;
+    var slice_stream = std.io.SliceOutStream.init(out_slice[0..]);
+    try slice_stream.stream.print("{}", Response.ok(Value.Null,Oid.new()));
+    assert(std.json.validate(slice_stream.getWritten()));
+}
+
+test "Response.Error" {
+    var out_slice = []u8{0} ** 500;
+    var slice_stream = std.io.SliceOutStream.init(out_slice[0..]);
+    try slice_stream.stream.print("{}", Response.err(ErrorCode.InternalError, null));
+    assert(std.json.validate(slice_stream.getWritten()));
 }

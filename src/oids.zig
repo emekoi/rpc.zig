@@ -72,7 +72,10 @@ pub const Oid = packed struct {
     }
 
     pub fn equal(self: Oid, other: Oid) bool {
-        return self.time == other.time and self.fuzz == other.fuzz and self.count == other.count;
+        return std.mem.eql(u8,
+            std.mem.asBytes(&self),
+            std.mem.asBytes(&other)
+        );
     }
 };
 
